@@ -125,126 +125,157 @@ def _add_station_registry_v25(config_dict):
             config_dict.merge(stnreg_dict)
     except KeyError:
         pass
-
+    
 def update_to_v25(config_dict):
     """Major changes for V2.5:
 
     - Option webpath is now station_url
     - Drivers are now in their own package
     - Introduction of the station registry
-
     """
     major, minor = weecfg.get_version_info(config_dict)
-
     if major + minor >= '205':
         return
 
-    try:
-        # webpath is now station_url
-        webpath = config_dict['Station'].get('webpath')
-        station_url = config_dict['Station'].get('station_url')
-        if webpath is not None and station_url is None:
-            config_dict['Station']['station_url'] = webpath
-        config_dict['Station'].pop('webpath', None)
-    except KeyError:
-        pass
+    _update_station_url_v25(config_dict)
 
-    # Drivers are now in their own Python package. Change the names.
-
-    # --- Davis Vantage series ---
-    try:
-        if config_dict['Vantage']['driver'].strip() == 'weewx.VantagePro':
-            config_dict['Vantage']['driver'] = 'weewx.drivers.vantage'
-    except KeyError:
-        pass
-
-    # --- Oregon Scientific WMR100 ---
-
-    # The section name has changed from WMR-USB to WMR100
-    if 'WMR-USB' in config_dict:
-        if 'WMR100' in config_dict:
-            sys.exit("\n*** Configuration file has both a 'WMR-USB' "
-                     "section and a 'WMR100' section. Aborting ***\n\n")
-        config_dict.rename('WMR-USB', 'WMR100')
-    # If necessary, reflect the section name in the station type:
-    try:
-        if config_dict['Station']['station_type'].strip() == 'WMR-USB':
-            config_dict['Station']['station_type'] = 'WMR100'
-    except KeyError:
-        pass
-    # Finally, the name of the driver has been changed
-    try:
-        if config_dict['WMR100']['driver'].strip() == 'weewx.wmrx':
-            config_dict['WMR100']['driver'] = 'weewx.drivers.wmr100'
-    except KeyError:
-        pass
-
-    # --- Oregon Scientific WMR9x8 series ---
-
-    # The section name has changed from WMR-918 to WMR9x8
-    if 'WMR-918' in config_dict:
-        if 'WMR9x8' in config_dict:
-            sys.exit("\n*** Configuration file has both a 'WMR-918' "
-                     "section and a 'WMR9x8' section. Aborting ***\n\n")
-        config_dict.rename('WMR-918', 'WMR9x8')
-    # If necessary, reflect the section name in the station type:
-    try:
-        if config_dict['Station']['station_type'].strip() == 'WMR-918':
-            config_dict['Station']['station_type'] = 'WMR9x8'
-    except KeyError:
-        pass
-    # Finally, the name of the driver has been changed
-    try:
-        if config_dict['WMR9x8']['driver'].strip() == 'weewx.WMR918':
-            config_dict['WMR9x8']['driver'] = 'weewx.drivers.wmr9x8'
-    except KeyError:
-        pass
-
-    # --- Fine Offset instruments ---
-
-    try:
-        if config_dict['FineOffsetUSB']['driver'].strip() == 'weewx.fousb':
-            config_dict['FineOffsetUSB']['driver'] = 'weewx.drivers.fousb'
-    except KeyError:
-        pass
-
-    # --- The weewx Simulator ---
-
-    try:
-        if config_dict['Simulator']['driver'].strip() == 'weewx.simulator':
-            config_dict['Simulator']['driver'] = 'weewx.drivers.simulator'
-    except KeyError:
-        pass
+    _update_simple_driver(config_dict, 'Vantage',
+                          'weewx.VantagePro', 'weewx.drivers.vantage')
+    _rename_driver_section(config_dict, 'WMR-USB', 'WMR100',
+                           'weewx.wmrx', 'weewx.drivers.wmr100')
+    _rename_driver_section(config_dict, 'WMR-918', 'WMR9x8',
+                           'weewx.WMR918', 'weewx.drivers.wmr9x8')
+    _update_simple_driver(config_dict, 'FineOffsetUSB',
+                          'weewx.fousb', 'weewx.drivers.fousb')
+    _update_simple_driver(config_dict, 'Simulator',
+                          'weewx.simulator', 'weewx.drivers.simulator')
 
     if 'StdArchive' in config_dict:
-        # Option stats_types is no longer used. Get rid of it.
         config_dict['StdArchive'].pop('stats_types', None)
 
-    try:
-        # V2.5 saw the introduction of the station registry:
-        if 'StationRegistry' not in config_dict['StdRESTful']:
-            stnreg_dict = weeutil.config.config_from_str("""[StdRESTful]
-
-        [[StationRegistry]]
-            # Uncomment the following line to register this weather station.
-            #register_this_station = True
-
-            # Specify a station URL, otherwise the station_url from [Station]
-            # will be used.
-            #station_url = http://example.com/weather/
-
-            # Specify a description of the station, otherwise the location from
-            # [Station] will be used.
-            #description = The greatest station on earth
-
-            driver = weewx.restful.StationRegistry
-
-    """)
-            config_dict.merge(stnreg_dict)
-    except KeyError:
-        pass
+    _add_station_registry_v25(config_dict)
 
     config_dict['version'] = '2.5.0'
+
+# def update_to_v25(config_dict):
+#     """Major changes for V2.5:
+
+#     - Option webpath is now station_url
+#     - Drivers are now in their own package
+#     - Introduction of the station registry
+
+#     """
+#     major, minor = weecfg.get_version_info(config_dict)
+
+#     if major + minor >= '205':
+#         return
+
+#     try:
+#         # webpath is now station_url
+#         webpath = config_dict['Station'].get('webpath')
+#         station_url = config_dict['Station'].get('station_url')
+#         if webpath is not None and station_url is None:
+#             config_dict['Station']['station_url'] = webpath
+#         config_dict['Station'].pop('webpath', None)
+#     except KeyError:
+#         pass
+
+#     # Drivers are now in their own Python package. Change the names.
+
+#     # --- Davis Vantage series ---
+#     try:
+#         if config_dict['Vantage']['driver'].strip() == 'weewx.VantagePro':
+#             config_dict['Vantage']['driver'] = 'weewx.drivers.vantage'
+#     except KeyError:
+#         pass
+
+#     # --- Oregon Scientific WMR100 ---
+
+#     # The section name has changed from WMR-USB to WMR100
+#     if 'WMR-USB' in config_dict:
+#         if 'WMR100' in config_dict:
+#             sys.exit("\n*** Configuration file has both a 'WMR-USB' "
+#                      "section and a 'WMR100' section. Aborting ***\n\n")
+#         config_dict.rename('WMR-USB', 'WMR100')
+#     # If necessary, reflect the section name in the station type:
+#     try:
+#         if config_dict['Station']['station_type'].strip() == 'WMR-USB':
+#             config_dict['Station']['station_type'] = 'WMR100'
+#     except KeyError:
+#         pass
+#     # Finally, the name of the driver has been changed
+#     try:
+#         if config_dict['WMR100']['driver'].strip() == 'weewx.wmrx':
+#             config_dict['WMR100']['driver'] = 'weewx.drivers.wmr100'
+#     except KeyError:
+#         pass
+
+#     # --- Oregon Scientific WMR9x8 series ---
+
+#     # The section name has changed from WMR-918 to WMR9x8
+#     if 'WMR-918' in config_dict:
+#         if 'WMR9x8' in config_dict:
+#             sys.exit("\n*** Configuration file has both a 'WMR-918' "
+#                      "section and a 'WMR9x8' section. Aborting ***\n\n")
+#         config_dict.rename('WMR-918', 'WMR9x8')
+#     # If necessary, reflect the section name in the station type:
+#     try:
+#         if config_dict['Station']['station_type'].strip() == 'WMR-918':
+#             config_dict['Station']['station_type'] = 'WMR9x8'
+#     except KeyError:
+#         pass
+#     # Finally, the name of the driver has been changed
+#     try:
+#         if config_dict['WMR9x8']['driver'].strip() == 'weewx.WMR918':
+#             config_dict['WMR9x8']['driver'] = 'weewx.drivers.wmr9x8'
+#     except KeyError:
+#         pass
+
+#     # --- Fine Offset instruments ---
+
+#     try:
+#         if config_dict['FineOffsetUSB']['driver'].strip() == 'weewx.fousb':
+#             config_dict['FineOffsetUSB']['driver'] = 'weewx.drivers.fousb'
+#     except KeyError:
+#         pass
+
+#     # --- The weewx Simulator ---
+
+#     try:
+#         if config_dict['Simulator']['driver'].strip() == 'weewx.simulator':
+#             config_dict['Simulator']['driver'] = 'weewx.drivers.simulator'
+#     except KeyError:
+#         pass
+
+#     if 'StdArchive' in config_dict:
+#         # Option stats_types is no longer used. Get rid of it.
+#         config_dict['StdArchive'].pop('stats_types', None)
+
+#     try:
+#         # V2.5 saw the introduction of the station registry:
+#         if 'StationRegistry' not in config_dict['StdRESTful']:
+#             stnreg_dict = weeutil.config.config_from_str("""[StdRESTful]
+
+#         [[StationRegistry]]
+#             # Uncomment the following line to register this weather station.
+#             #register_this_station = True
+
+#             # Specify a station URL, otherwise the station_url from [Station]
+#             # will be used.
+#             #station_url = http://example.com/weather/
+
+#             # Specify a description of the station, otherwise the location from
+#             # [Station] will be used.
+#             #description = The greatest station on earth
+
+#             driver = weewx.restful.StationRegistry
+
+#     """)
+#             config_dict.merge(stnreg_dict)
+#     except KeyError:
+#         pass
+
+#     config_dict['version'] = '2.5.0'
 
 
 def update_to_v26(config_dict):
