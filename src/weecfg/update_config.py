@@ -66,6 +66,65 @@ def merge_config(config_dict, template_dict):
     # All we need to do is update the version number:
     config_dict['version'] = template_dict['version']
 
+def _update_simple_driver(config_dict, section, old_driver, new_driver):
+    """Helper function to update a simple driver name, if it is present and has the old value"""
+
+    try:
+        if config_dict[section]['driver'].strip() == old_driver:
+            config_dict[section]['driver'] = new_driver
+    except KeyError:
+        pass
+
+def _rename_driver_section(config_dict,old_section, new_section, old_driver, new_driver):
+    """Rename a driver section, fix station_type and update driver path.Exits if both the old and new section names already exisst."""
+    if old_section in config_dict:
+        if new_section in config_dict:
+            sys.exit(
+                f"\n*** Configuration file has both a '{old_section}' "
+                f"section and a '{new_section}' section. Aborting ***\n\n"
+            ) 
+        config_dict.rename(old_section, new_section)
+    try:
+        if config_dict['Station']['station_type'].strip() == old_section:
+            config_dict['Station']['station_type'] = new_section
+    except KeyError:
+        pass
+    _update_simple_driver(config_dict, new_section, old_driver, new_driver)
+      
+def _update_station_url_v25(config_dict):
+    """Rename deprecated 'webpath' to 'station_url' in [Station]"""
+    try:
+        webpath = config_dict['Station'].get('webpath')
+        station_url = config_dict['Station'].get('station_url')
+        if webpath is not None and station_url is None:
+            config_dict['Station']['station_url'] = webpath
+        config_dict['Station'].pop('webpath', None)
+    except KeyError:
+        pass
+def _add_station_registry_v25(config_dict):
+    """Add the station registry to [StdRESTful] if it is not already present"""
+    try:
+        if 'StationRegistry' not in config_dict['StdRESTful']:
+            stnreg_dict = weeutil.config.config_from_str("""[StdRESTful]
+
+        [[StationRegistry]]
+            # Uncomment the following line to register this weather station.
+            #register_this_station = True
+
+            # Specify a station URL, otherwise the station_url from [Station]
+            # will be used.
+            #station_url = http://example.com/weather/
+
+            # Specify a description of the station, otherwise the location from
+            # [Station] will be used.
+            #description = The greatest station on earth
+
+            driver = weewx.restful.StationRegistry
+
+    """)
+            config_dict.merge(stnreg_dict)
+    except KeyError:
+        pass
 
 def update_to_v25(config_dict):
     """Major changes for V2.5:
