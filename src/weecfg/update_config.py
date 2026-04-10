@@ -101,6 +101,7 @@ def _update_station_url_v25(config_dict):
         config_dict['Station'].pop('webpath', None)
     except KeyError:
         pass
+
 def _add_station_registry_v25(config_dict):
     """Add the station registry to [StdRESTful] if it is not already present"""
     try:
@@ -125,7 +126,175 @@ def _add_station_registry_v25(config_dict):
             config_dict.merge(stnreg_dict)
     except KeyError:
         pass
+
+def _v26_add_station_models(config_dict):
+    # Add a 'model' key with a default value to WMR100, WMR200, and WMR9x8
+    # if the key doesn't already exist
+    _MODEL_DEFAULTS = {
+        'WMR100': ('WMR100', 'WMR100, WMR100N, WMRS200'),
+        'WMR200': ('WMR200', 'WMR200, WMR200A, Radio Shack W200'),
+        'WMR9x8': ('WMR968', 'WMR918, Radio Shack 63-1016'),
+    }
+    for section, (default_model, examples) in _MODEL_DEFAULTS.items():
+        try:
+            if 'model' not in config_dict[section]:
+                config_dict[section]['model'] = default_model
+                config_dict[section].comments['model'] = [
+                    '', f'    # The station model, e.g., {examples}']
+        except KeyError:
+            pass
+
+def _v26_update_metricwx_comment(config_dict):
+    # Update the inline comment for 'target_unit' to include METRICWX as an option
+    try:
+        config_dict['StdConvert'].inline_comments['target_unit'] = \
+        "# Options are 'US','METRICWX', or 'METRIC' "
+    except KeyError:
+        pass
+
+def _v26_update_qc_defaults(config_dict):
+    # Add missing min/max quality-control ranges under [StdQC] [[MinMax]];
+    # existing values are left unchanged
+    _QC_DEFAULTS = {
+        'inHumidity': [0, 100],
+        'rain':       [0, 60, 'inch'],
+        'windSpeed':  [0, 120, 'mile_per_hour'],
+        'inTemp':     [10, 20, 'degree_F'],
+    }
+    try:
+        minmax = config_dict['StdQC']['MinMax']
+        for key, value in _QC_DEFAULTS.items():
+            if key not in minmax:
+                minmax[key] = value
+    except KeyError:
+        pass
     
+def _v26_migrate_service_list(config_dict):
+    # Replace the old flat 'service_list' with six named service group lists;
+    # each service is placed in its correct group using _SERVICE_MAP
+    _SERVICE_MAP = {
+        'weewx.wxengine.StdTimeSynch':  'prep_services',
+        'weewx.wxengine.StdConvert':    'process_services',
+        'weewx.wxengine.StdCalibrate':  'process_services',
+        'weewx.wxengine.StdQC':         'process_services',
+        'weewx.wxengine.StdArchive':    'archive_services',
+        'weewx.wxengine.StdPrint':      'report_services',
+        'weewx.wxengine.StdReport':     'report_services',
+    }
+    _GROUPS = ['prep_services', 'data_services', 'process_services',
+               'archive_services', 'restful_services', 'report_services']
+
+    if 'Engines' not in config_dict:
+        return
+    engine = config_dict['Engines']['WxEngine']
+    if 'service_list' not in engine:
+        return
+
+    for group in _GROUPS:
+        engine[group] = []
+    engine.comments['prep_services'] = [
+        '', ' # The list of services the main weewx engine should run:']
+
+    last_group = 'prep_services'
+    for raw_svc in engine['service_list']:
+        svc = raw_svc.strip()
+        if svc == 'weewx.wxengine.StdRESTful':
+            continue
+        group = _SERVICE_MAP.get(svc, last_group)
+        engine[group].append(svc)
+        last_group = group
+
+    _v26_migrate_restful_services(config_dict, engine)
+    engine.pop('service_list', None)
+
+def _v26_migrate_restful_services(config_dict, engine):
+    # Move each [StdRESTful] section into 'restful_services' using updated class names;
+    # add StdStationRegistry if it is missing
+    for section in config_dict['StdRESTful'].sections:
+        svc = config_dict['StdRESTful'][section]['driver']
+        if svc.startswith('weewx.restful'):
+            svc = 'weewx.restx.Std' + section
+        if svc.endswith('AWEKAS'):
+            svc = 'weewx.restx.AWEKAS'
+        engine['restful_services'].append(svc)
+
+    if 'weewx.restx.StdStationRegistry' not in engine['restful_services']:
+        engine['restful_services'].append('weewx.restx.StdStationRegistry')
+
+def _v26_update_restful_logging(config_dict):
+    # Add 'log_success' and 'log_failure' to every [StdRESTful] subsection
+    # and remove the now-unused 'driver' key
+    for section in config_dict['StdRESTful']:
+        sec = config_dict['StdRESTful'][section]
+        comments = sec.comments.get('driver', [])
+        if 'log_success' not in sec:
+            sec['log_success'] = True
+        if 'log_failure' not in sec:
+            sec['log_failure'] = True
+        sec.comments['log_success'] = comments
+        sec.pop('driver', None)
+
+def _v26_add_rapidfire(config_dict):
+    # Add 'rapidfire = False' to [StdRESTful] [[Wunderground]] if not present
+    try:
+        wg = config_dict['StdRESTful']['Wunderground']
+        if 'rapidfire' not in wg:
+            wg['rapidfire'] = False
+            wg.comments['rapidfire'] = [
+                '',
+                '        # Set to True to use the WU "Rapidfire" protocol']
+    except KeyError:
+        pass
+
+def _v26_add_wow_uploader(config_dict):
+    # Insert a WOW uploader template under [StdRESTful] if none exists
+    _WOW_STANZA = """[StdRESTful]
+        [[WOW]]
+            #station = your WOW station ID
+            #password = your WOW password
+            log_success = True
+            log_failure = True
+    """
+    try:
+        if 'WOW' not in config_dict['StdRESTful']:
+            config_dict.merge(weeutil.config.config_from_str(_WOW_STANZA))
+            config_dict['StdRESTful'].comments['WOW'] = ['']
+    except KeyError:
+        pass
+
+def _v26_add_awekas_uploader(config_dict):
+    # Insert an AWEKAS uploader template under [StdRESTful] if none exists
+    _AWEKAS_STANZA = """[StdRESTful]
+        [[AWEKAS]]
+            #username = your AWEKAS username
+            #password = your AWEKAS password
+            log_success = True
+            log_failure = True
+    """
+    try:
+        if 'AWEKAS' not in config_dict['StdRESTful']:
+            config_dict.merge(weeutil.config.config_from_str(_AWEKAS_STANZA))
+            config_dict['StdRESTful'].comments['AWEKAS'] = ['']
+    except KeyError:
+        pass
+    
+def _v26_update_cwop_options(config_dict):
+    # Rename 'interval' to 'post_interval' and remove 'server' from [[CWOP]]
+    try:
+        cwop = config_dict['StdRESTful']['CWOP']
+        if 'interval' in cwop:
+            comment = cwop.comments['interval']
+            cwop['post_interval'] = cwop['interval']
+            cwop.pop('interval')
+            cwop.comments['post_interval'] = comment
+        if 'server' in cwop:
+            comments = [c for c in cwop.comments.get('server', []) if 'Comma' not in c]
+            cwop.pop('server', None)
+            first_key = cwop.scalars[0]
+            cwop.comments[first_key] = comments
+    except KeyError:
+        pass
+
 def update_to_v25(config_dict):
     """Major changes for V2.5:
 
@@ -156,6 +325,43 @@ def update_to_v25(config_dict):
     _add_station_registry_v25(config_dict)
 
     config_dict['version'] = '2.5.0'
+
+def update_to_v26(config_dict):
+    """Update a configuration dictionary to V2.6."""
+
+    # Skip if already at v2.6 or higher
+    major, minor = weecfg.get_version_info(config_dict)
+    if major + minor >= '206':
+        return
+
+    # Add 'model' key to WMR100, WMR200, and WMR9x8 sections
+    _v26_add_station_models(config_dict)
+
+    # Update the 'target_unit' comment to mention METRICWX
+    _v26_update_metricwx_comment(config_dict)
+
+    # Add default min/max ranges for inHumidity, rain, windSpeed, inTemp
+    _v26_update_qc_defaults(config_dict)
+
+    # Split the old 'service_list' into six named service group lists
+    _v26_migrate_service_list(config_dict)
+
+    # Add log_success/log_failure to each RESTful section; remove old 'driver' key
+    _v26_update_restful_logging(config_dict)
+
+    # Add 'rapidfire = False' to the Wunderground section
+    _v26_add_rapidfire(config_dict)
+
+    # Add a WOW uploader template to [StdRESTful]
+    _v26_add_wow_uploader(config_dict)
+
+    # Add an AWEKAS uploader template to [StdRESTful]
+    _v26_add_awekas_uploader(config_dict)
+
+    # Rename CWOP 'interval' to 'post_interval'; remove 'server'
+    _v26_update_cwop_options(config_dict)
+
+    config_dict['version'] = '2.6.0'
 
 # def update_to_v25(config_dict):
 #     """Major changes for V2.5:
@@ -278,224 +484,224 @@ def update_to_v25(config_dict):
 #     config_dict['version'] = '2.5.0'
 
 
-def update_to_v26(config_dict):
-    """Update a configuration diction to V2.6.
+# def update_to_v26(config_dict):
+#     """Update a configuration diction to V2.6.
 
-    Major changes:
+#     Major changes:
 
-    - Addition of "model" option for WMR100, WMR200, and WMR9x8
-    - New option METRICWX
-    - Engine service list now broken up into separate sublists
-    - Introduction of 'log_success' and 'log_failure' options
-    - Introduction of rapidfire
-    - Support of uploaders for WOW and AWEKAS
-    - CWOP option 'interval' changed to 'post_interval'
-    - CWOP option 'server' changed to 'server_list' (and is not in default weewx.conf)
-    """
+#     - Addition of "model" option for WMR100, WMR200, and WMR9x8
+#     - New option METRICWX
+#     - Engine service list now broken up into separate sublists
+#     - Introduction of 'log_success' and 'log_failure' options
+#     - Introduction of rapidfire
+#     - Support of uploaders for WOW and AWEKAS
+#     - CWOP option 'interval' changed to 'post_interval'
+#     - CWOP option 'server' changed to 'server_list' (and is not in default weewx.conf)
+#     """
 
-    major, minor = weecfg.get_version_info(config_dict)
+#     major, minor = weecfg.get_version_info(config_dict)
 
-    if major + minor >= '206':
-        return
+#     if major + minor >= '206':
+#         return
 
-    try:
-        if 'model' not in config_dict['WMR100']:
-            config_dict['WMR100']['model'] = 'WMR100'
-            config_dict['WMR100'].comments['model'] = \
-                ["", "    # The station model, e.g., WMR100, WMR100N, WMRS200"]
-    except KeyError:
-        pass
+#     try:
+#         if 'model' not in config_dict['WMR100']:
+#             config_dict['WMR100']['model'] = 'WMR100'
+#             config_dict['WMR100'].comments['model'] = \
+#                 ["", "    # The station model, e.g., WMR100, WMR100N, WMRS200"]
+#     except KeyError:
+#         pass
 
-    try:
-        if 'model' not in config_dict['WMR200']:
-            config_dict['WMR200']['model'] = 'WMR200'
-            config_dict['WMR200'].comments['model'] = \
-                ["", "    # The station model, e.g., WMR200, WMR200A, Radio Shack W200"]
-    except KeyError:
-        pass
+#     try:
+#         if 'model' not in config_dict['WMR200']:
+#             config_dict['WMR200']['model'] = 'WMR200'
+#             config_dict['WMR200'].comments['model'] = \
+#                 ["", "    # The station model, e.g., WMR200, WMR200A, Radio Shack W200"]
+#     except KeyError:
+#         pass
 
-    try:
-        if 'model' not in config_dict['WMR9x8']:
-            config_dict['WMR9x8']['model'] = 'WMR968'
-            config_dict['WMR9x8'].comments['model'] = \
-                ["", "    # The station model, e.g., WMR918, Radio Shack 63-1016"]
-    except KeyError:
-        pass
+#     try:
+#         if 'model' not in config_dict['WMR9x8']:
+#             config_dict['WMR9x8']['model'] = 'WMR968'
+#             config_dict['WMR9x8'].comments['model'] = \
+#                 ["", "    # The station model, e.g., WMR918, Radio Shack 63-1016"]
+#     except KeyError:
+#         pass
 
-    # Option METRICWX was introduced. Include it in the inline comment
-    try:
-        config_dict['StdConvert'].inline_comments[
-            'target_unit'] = "# Options are 'US', 'METRICWX', or 'METRIC'"
-    except KeyError:
-        pass
+#     # Option METRICWX was introduced. Include it in the inline comment
+#     try:
+#         config_dict['StdConvert'].inline_comments[
+#             'target_unit'] = "# Options are 'US', 'METRICWX', or 'METRIC'"
+#     except KeyError:
+#         pass
 
-    # New default values for inHumidity, rain, and windSpeed Quality Controls
-    try:
-        if 'inHumidity' not in config_dict['StdQC']['MinMax']:
-            config_dict['StdQC']['MinMax']['inHumidity'] = [0, 100]
-        if 'rain' not in config_dict['StdQC']['MinMax']:
-            config_dict['StdQC']['MinMax']['rain'] = [0, 60, "inch"]
-        if 'windSpeed' not in config_dict['StdQC']['MinMax']:
-            config_dict['StdQC']['MinMax']['windSpeed'] = [0, 120, "mile_per_hour"]
-        if 'inTemp' not in config_dict['StdQC']['MinMax']:
-            config_dict['StdQC']['MinMax']['inTemp'] = [10, 20, "degree_F"]
-    except KeyError:
-        pass
+#     # New default values for inHumidity, rain, and windSpeed Quality Controls
+#     try:
+#         if 'inHumidity' not in config_dict['StdQC']['MinMax']:
+#             config_dict['StdQC']['MinMax']['inHumidity'] = [0, 100]
+#         if 'rain' not in config_dict['StdQC']['MinMax']:
+#             config_dict['StdQC']['MinMax']['rain'] = [0, 60, "inch"]
+#         if 'windSpeed' not in config_dict['StdQC']['MinMax']:
+#             config_dict['StdQC']['MinMax']['windSpeed'] = [0, 120, "mile_per_hour"]
+#         if 'inTemp' not in config_dict['StdQC']['MinMax']:
+#             config_dict['StdQC']['MinMax']['inTemp'] = [10, 20, "degree_F"]
+#     except KeyError:
+#         pass
 
-    service_map_v2 = {'weewx.wxengine.StdTimeSynch': 'prep_services',
-                      'weewx.wxengine.StdConvert': 'process_services',
-                      'weewx.wxengine.StdCalibrate': 'process_services',
-                      'weewx.wxengine.StdQC': 'process_services',
-                      'weewx.wxengine.StdArchive': 'archive_services',
-                      'weewx.wxengine.StdPrint': 'report_services',
-                      'weewx.wxengine.StdReport': 'report_services'}
+#     service_map_v2 = {'weewx.wxengine.StdTimeSynch': 'prep_services',
+#                       'weewx.wxengine.StdConvert': 'process_services',
+#                       'weewx.wxengine.StdCalibrate': 'process_services',
+#                       'weewx.wxengine.StdQC': 'process_services',
+#                       'weewx.wxengine.StdArchive': 'archive_services',
+#                       'weewx.wxengine.StdPrint': 'report_services',
+#                       'weewx.wxengine.StdReport': 'report_services'}
 
-    # See if the engine configuration section has the old-style "service_list":
-    if 'Engines' in config_dict and 'service_list' in config_dict['Engines']['WxEngine']:
-        # It does. Break it up into five, smaller lists. If a service
-        # does not appear in the dictionary "service_map_v2", meaning we
-        # do not know what it is, then stick it in the last group we
-        # have seen. This should get its position about right.
-        last_group = 'prep_services'
+#     # See if the engine configuration section has the old-style "service_list":
+#     if 'Engines' in config_dict and 'service_list' in config_dict['Engines']['WxEngine']:
+#         # It does. Break it up into five, smaller lists. If a service
+#         # does not appear in the dictionary "service_map_v2", meaning we
+#         # do not know what it is, then stick it in the last group we
+#         # have seen. This should get its position about right.
+#         last_group = 'prep_services'
 
-        # Set up a bunch of empty groups in the right order. Option 'data_services' was actually introduced
-        # in v3.0, but it can be included without harm here.
-        for group in ['prep_services', 'data_services', 'process_services', 'archive_services',
-                      'restful_services', 'report_services']:
-            config_dict['Engines']['WxEngine'][group] = list()
+#         # Set up a bunch of empty groups in the right order. Option 'data_services' was actually introduced
+#         # in v3.0, but it can be included without harm here.
+#         for group in ['prep_services', 'data_services', 'process_services', 'archive_services',
+#                       'restful_services', 'report_services']:
+#             config_dict['Engines']['WxEngine'][group] = list()
 
-        # Add a helpful comment
-        config_dict['Engines']['WxEngine'].comments['prep_services'] = \
-            ['', ' # The list of services the main weewx engine should run:']
+#         # Add a helpful comment
+#         config_dict['Engines']['WxEngine'].comments['prep_services'] = \
+#             ['', ' # The list of services the main weewx engine should run:']
 
-        # Now map the old service names to the right group
-        for _svc_name in config_dict['Engines']['WxEngine']['service_list']:
-            svc_name = _svc_name.strip()
-            # Skip the no longer needed StdRESTful service:
-            if svc_name == 'weewx.wxengine.StdRESTful':
-                continue
-            # Do we know about this service?
-            if svc_name in service_map_v2:
-                # Yes. Get which group it belongs to, and put it there
-                group = service_map_v2[svc_name]
-                config_dict['Engines']['WxEngine'][group].append(svc_name)
-                last_group = group
-            else:
-                # No. Put it in the last group.
-                config_dict['Engines']['WxEngine'][last_group].append(svc_name)
+#         # Now map the old service names to the right group
+#         for _svc_name in config_dict['Engines']['WxEngine']['service_list']:
+#             svc_name = _svc_name.strip()
+#             # Skip the no longer needed StdRESTful service:
+#             if svc_name == 'weewx.wxengine.StdRESTful':
+#                 continue
+#             # Do we know about this service?
+#             if svc_name in service_map_v2:
+#                 # Yes. Get which group it belongs to, and put it there
+#                 group = service_map_v2[svc_name]
+#                 config_dict['Engines']['WxEngine'][group].append(svc_name)
+#                 last_group = group
+#             else:
+#                 # No. Put it in the last group.
+#                 config_dict['Engines']['WxEngine'][last_group].append(svc_name)
 
-        # Now add the restful services, using the old driver name to help us
-        for section in config_dict['StdRESTful'].sections:
-            svc = config_dict['StdRESTful'][section]['driver']
-            # weewx.restful has changed to weewx.restx
-            if svc.startswith('weewx.restful'):
-                svc = 'weewx.restx.Std' + section
-            # awekas is in weewx.restx since 2.6
-            if svc.endswith('AWEKAS'):
-                svc = 'weewx.restx.AWEKAS'
-            config_dict['Engines']['WxEngine']['restful_services'].append(svc)
+#         # Now add the restful services, using the old driver name to help us
+#         for section in config_dict['StdRESTful'].sections:
+#             svc = config_dict['StdRESTful'][section]['driver']
+#             # weewx.restful has changed to weewx.restx
+#             if svc.startswith('weewx.restful'):
+#                 svc = 'weewx.restx.Std' + section
+#             # awekas is in weewx.restx since 2.6
+#             if svc.endswith('AWEKAS'):
+#                 svc = 'weewx.restx.AWEKAS'
+#             config_dict['Engines']['WxEngine']['restful_services'].append(svc)
 
-        # Depending on how old a version the user has, the station registry
-        # may have to be included:
-        if 'weewx.restx.StdStationRegistry' not in config_dict['Engines']['WxEngine'][
-            'restful_services']:
-            config_dict['Engines']['WxEngine']['restful_services'].append(
-                'weewx.restx.StdStationRegistry')
+#         # Depending on how old a version the user has, the station registry
+#         # may have to be included:
+#         if 'weewx.restx.StdStationRegistry' not in config_dict['Engines']['WxEngine'][
+#             'restful_services']:
+#             config_dict['Engines']['WxEngine']['restful_services'].append(
+#                 'weewx.restx.StdStationRegistry')
 
-        # Get rid of the no longer needed service_list:
-        config_dict['Engines']['WxEngine'].pop('service_list', None)
+#         # Get rid of the no longer needed service_list:
+#         config_dict['Engines']['WxEngine'].pop('service_list', None)
 
-    # V2.6 introduced "log_success" and "log_failure" options.
-    # The "driver" option was removed.
-    for section in config_dict['StdRESTful']:
-        # Save comments before popping driver
-        comments = config_dict['StdRESTful'][section].comments.get('driver', [])
-        if 'log_success' not in config_dict['StdRESTful'][section]:
-            config_dict['StdRESTful'][section]['log_success'] = True
-        if 'log_failure' not in config_dict['StdRESTful'][section]:
-            config_dict['StdRESTful'][section]['log_failure'] = True
-        config_dict['StdRESTful'][section].comments['log_success'] = comments
-        config_dict['StdRESTful'][section].pop('driver', None)
+#     # V2.6 introduced "log_success" and "log_failure" options.
+#     # The "driver" option was removed.
+#     for section in config_dict['StdRESTful']:
+#         # Save comments before popping driver
+#         comments = config_dict['StdRESTful'][section].comments.get('driver', [])
+#         if 'log_success' not in config_dict['StdRESTful'][section]:
+#             config_dict['StdRESTful'][section]['log_success'] = True
+#         if 'log_failure' not in config_dict['StdRESTful'][section]:
+#             config_dict['StdRESTful'][section]['log_failure'] = True
+#         config_dict['StdRESTful'][section].comments['log_success'] = comments
+#         config_dict['StdRESTful'][section].pop('driver', None)
 
-    # Option 'rapidfire' was new:
-    try:
-        if 'rapidfire' not in config_dict['StdRESTful']['Wunderground']:
-            config_dict['StdRESTful']['Wunderground']['rapidfire'] = False
-            config_dict['StdRESTful']['Wunderground'].comments['rapidfire'] = \
-                ['',
-                 '        # Set the following to True to have weewx use the WU "Rapidfire"',
-                 '        # protocol']
-    except KeyError:
-        pass
+#     # Option 'rapidfire' was new:
+#     try:
+#         if 'rapidfire' not in config_dict['StdRESTful']['Wunderground']:
+#             config_dict['StdRESTful']['Wunderground']['rapidfire'] = False
+#             config_dict['StdRESTful']['Wunderground'].comments['rapidfire'] = \
+#                 ['',
+#                  '        # Set the following to True to have weewx use the WU "Rapidfire"',
+#                  '        # protocol']
+#     except KeyError:
+#         pass
 
-    # Support for the WOW uploader was introduced
-    try:
-        if 'WOW' not in config_dict['StdRESTful']:
-            config_dict.merge(weeutil.config.config_from_str("""[StdRESTful]
+#     # Support for the WOW uploader was introduced
+#     try:
+#         if 'WOW' not in config_dict['StdRESTful']:
+#             config_dict.merge(weeutil.config.config_from_str("""[StdRESTful]
 
-            [[WOW]]
-                # This section is for configuring posts to WOW
+#             [[WOW]]
+#                 # This section is for configuring posts to WOW
 
-                # If you wish to do this, uncomment the following station and password
-                # lines and fill them with your station and password:
-                #station = your WOW station ID
-                #password = your WOW password
+#                 # If you wish to do this, uncomment the following station and password
+#                 # lines and fill them with your station and password:
+#                 #station = your WOW station ID
+#                 #password = your WOW password
 
-                log_success = True
-                log_failure = True
+#                 log_success = True
+#                 log_failure = True
 
-        """))
-            config_dict['StdRESTful'].comments['WOW'] = ['']
-    except KeyError:
-        pass
+#         """))
+#             config_dict['StdRESTful'].comments['WOW'] = ['']
+#     except KeyError:
+#         pass
 
-    # Support for the AWEKAS uploader was introduced
-    try:
-        if 'AWEKAS' not in config_dict['StdRESTful']:
-            config_dict.merge(weeutil.config.config_from_str("""[StdRESTful]
+#     # Support for the AWEKAS uploader was introduced
+#     try:
+#         if 'AWEKAS' not in config_dict['StdRESTful']:
+#             config_dict.merge(weeutil.config.config_from_str("""[StdRESTful]
 
-            [[AWEKAS]]
-                # This section is for configuring posts to AWEKAS
+#             [[AWEKAS]]
+#                 # This section is for configuring posts to AWEKAS
 
-                # If you wish to do this, uncomment the following username and password
-                # lines and fill them with your username and password:
-                #username = your AWEKAS username
-                #password = your AWEKAS password
+#                 # If you wish to do this, uncomment the following username and password
+#                 # lines and fill them with your username and password:
+#                 #username = your AWEKAS username
+#                 #password = your AWEKAS password
 
-                log_success = True
-                log_failure = True
+#                 log_success = True
+#                 log_failure = True
 
-        """))
-            config_dict['StdRESTful'].comments['AWEKAS'] = ['']
-    except KeyError:
-        pass
+#         """))
+#             config_dict['StdRESTful'].comments['AWEKAS'] = ['']
+#     except KeyError:
+#         pass
 
-    # The CWOP option "interval" has changed to "post_interval"
-    try:
-        if 'interval' in config_dict['StdRESTful']['CWOP']:
-            comment = config_dict['StdRESTful']['CWOP'].comments['interval']
-            config_dict['StdRESTful']['CWOP']['post_interval'] = \
-                config_dict['StdRESTful']['CWOP']['interval']
-            config_dict['StdRESTful']['CWOP'].pop('interval')
-            config_dict['StdRESTful']['CWOP'].comments['post_interval'] = comment
-    except KeyError:
-        pass
+#     # The CWOP option "interval" has changed to "post_interval"
+#     try:
+#         if 'interval' in config_dict['StdRESTful']['CWOP']:
+#             comment = config_dict['StdRESTful']['CWOP'].comments['interval']
+#             config_dict['StdRESTful']['CWOP']['post_interval'] = \
+#                 config_dict['StdRESTful']['CWOP']['interval']
+#             config_dict['StdRESTful']['CWOP'].pop('interval')
+#             config_dict['StdRESTful']['CWOP'].comments['post_interval'] = comment
+#     except KeyError:
+#         pass
 
-    try:
-        if 'server' in config_dict['StdRESTful']['CWOP']:
-            # Save the old comments, as they are useful for setting up CWOP
-            comments = [c for c in config_dict['StdRESTful']['CWOP'].comments.get('server') if
-                        'Comma' not in c]
-            # Option "server" has become "server_list". It is also no longer
-            # included in the default weewx.conf, so just pop it.
-            config_dict['StdRESTful']['CWOP'].pop('server', None)
-            # Put the saved comments in front of the first scalar.
-            key = config_dict['StdRESTful']['CWOP'].scalars[0]
-            config_dict['StdRESTful']['CWOP'].comments[key] = comments
-    except KeyError:
-        pass
+#     try:
+#         if 'server' in config_dict['StdRESTful']['CWOP']:
+#             # Save the old comments, as they are useful for setting up CWOP
+#             comments = [c for c in config_dict['StdRESTful']['CWOP'].comments.get('server') if
+#                         'Comma' not in c]
+#             # Option "server" has become "server_list". It is also no longer
+#             # included in the default weewx.conf, so just pop it.
+#             config_dict['StdRESTful']['CWOP'].pop('server', None)
+#             # Put the saved comments in front of the first scalar.
+#             key = config_dict['StdRESTful']['CWOP'].scalars[0]
+#             config_dict['StdRESTful']['CWOP'].comments[key] = comments
+#     except KeyError:
+#         pass
 
-    config_dict['version'] = '2.6.0'
+#     config_dict['version'] = '2.6.0'
 
 
 def update_to_v30(config_dict):
