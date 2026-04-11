@@ -148,7 +148,7 @@ def _v26_update_metricwx_comment(config_dict):
     # Update the inline comment for 'target_unit' to include METRICWX as an option
     try:
         config_dict['StdConvert'].inline_comments['target_unit'] = \
-        "# Options are 'US','METRICWX', or 'METRIC' "
+            "# Options are 'US', 'METRICWX', or 'METRIC'"
     except KeyError:
         pass
 
@@ -242,18 +242,26 @@ def _v26_add_rapidfire(config_dict):
             wg['rapidfire'] = False
             wg.comments['rapidfire'] = [
                 '',
-                '        # Set to True to use the WU "Rapidfire" protocol']
+                '        # Set the following to True to have weewx use the WU "Rapidfire"',
+                '        # protocol']
     except KeyError:
         pass
 
 def _v26_add_wow_uploader(config_dict):
     # Insert a WOW uploader template under [StdRESTful] if none exists
     _WOW_STANZA = """[StdRESTful]
+
         [[WOW]]
+            # This section is for configuring posts to WOW
+
+            # If you wish to do this, uncomment the following station and password
+            # lines and fill them with your station and password:
             #station = your WOW station ID
             #password = your WOW password
+
             log_success = True
             log_failure = True
+
     """
     try:
         if 'WOW' not in config_dict['StdRESTful']:
@@ -265,11 +273,18 @@ def _v26_add_wow_uploader(config_dict):
 def _v26_add_awekas_uploader(config_dict):
     # Insert an AWEKAS uploader template under [StdRESTful] if none exists
     _AWEKAS_STANZA = """[StdRESTful]
+
         [[AWEKAS]]
+            # This section is for configuring posts to AWEKAS
+
+            # If you wish to do this, uncomment the following username and password
+            # lines and fill them with your username and password:
             #username = your AWEKAS username
             #password = your AWEKAS password
+
             log_success = True
             log_failure = True
+
     """
     try:
         if 'AWEKAS' not in config_dict['StdRESTful']:
